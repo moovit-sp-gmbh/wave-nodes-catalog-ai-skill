@@ -1,0 +1,825 @@
+{
+    "$schema": "./rules.schema.json",
+    "version": 1,
+    "stance": "These rules are a prescriptive target for new and reworked wave nodes, not a description of what any existing catalog already looks like.",
+    "overridesFile": "create-high5-nodes.config.json",
+    "rules": [
+        {
+            "id": "boolean-default-required",
+            "title": "BOOLEAN inputs always declare a defaultValue",
+            "class": "engine",
+            "scope": "input-type",
+            "statement": "Declare a literal true/false defaultValue on every BOOLEAN input and never mark a BOOLEAN mandatory: false without one.",
+            "rationale": "Stream Designer renders BOOLEAN as a checkbox with no unset state, so an absent default resolves to undefined despite the UI showing unchecked.",
+            "enforcedBy": "lint",
+            "lintRule": "boolean-default-required",
+            "overridable": false,
+            "incorrect": [
+                "{ name: Input.VERIFY_TLS, type: BOOLEAN, mandatory: false }"
+            ],
+            "correct": [
+                "{ name: Input.VERIFY_TLS, type: BOOLEAN, example: true, defaultValue: true, advanced: true }"
+            ],
+            "source": "references/input-type-rules.md#boolean"
+        },
+        {
+            "id": "example-required",
+            "title": "Every input and output declares an example",
+            "class": "engine",
+            "scope": "spec",
+            "statement": "Give every inputs[] and outputs[] entry a realistic example value.",
+            "rationale": "The hcloud-sdk StreamNodeSpecificationInput/Output types mark example as required, so a missing one either fails to typecheck or ships an unhelpful blank placeholder in Stream Designer.",
+            "enforcedBy": "lint",
+            "lintRule": "example-required",
+            "overridable": false,
+            "incorrect": [
+                "{ name: Input.TASK_ID, description: \"Enter the task id\", type: STRING, mandatory: true }"
+            ],
+            "correct": [
+                "{ name: Input.TASK_ID, description: \"Enter the task id\", type: STRING, example: \"abc123\", mandatory: true }"
+            ],
+            "source": "references/specification.md#input-optional-fields"
+        },
+        {
+            "id": "input-output-description-required",
+            "title": "Every input and output declares a description",
+            "class": "engine",
+            "scope": "spec",
+            "statement": "Give every inputs[] and outputs[] entry a description string.",
+            "rationale": "V3 requires description on every input/output entry; the hcloud-sdk types make the field non-optional so tsc catches an omission.",
+            "enforcedBy": "typecheck",
+            "overridable": false,
+            "incorrect": [
+                "{ name: Output.TASK_ID, type: STRING, example: \"abc123\" }"
+            ],
+            "correct": [
+                "{ name: Output.TASK_ID, description: \"Returns the id of the created task\", type: STRING, example: \"abc123\" }"
+            ],
+            "source": "references/specification.md#v3-fields-the-default-for-new-nodes"
+        },
+        {
+            "id": "spec-version-v3",
+            "title": "New nodes declare specVersion 3",
+            "class": "engine",
+            "scope": "spec",
+            "statement": "Author new nodes with specVersion: 3 and deprecated: false; leave V4 on ice and don't start new nodes on V1/V2.",
+            "rationale": "The engine source validates spec versions 1 to 3 only and the SDK version the blueprint pins has no V4 type, so V4 conditional inputs are on ice until the engine team confirms a release that executes them.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "specification: StreamNodeSpecificationV2 = { name: \"...\", ... }"
+            ],
+            "correct": [
+                "specification: StreamNodeSpecificationV3 = { specVersion: 3, deprecated: false, ... }"
+            ],
+            "source": "references/specification.md#pick-a-spec-version"
+        },
+        {
+            "id": "enum-io-names",
+            "title": "Name inputs and outputs through a local enum",
+            "class": "engine",
+            "scope": "spec",
+            "statement": "Declare a local enum Input and enum Output per node and reference members (name: Input.TASK_ID) instead of inline string literals.",
+            "rationale": "Tests, lint rules, and this skill's own AST helpers resolve enum members to their display string and report at the declaration site; inline literals are also fine to the engine but the enum is the established, lint-verified convention.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "{ name: \"Task id\", type: STRING, example: \"abc123\" }"
+            ],
+            "correct": [
+                "enum Output { TASK_ID = \"Task id\" }",
+                "{ name: Output.TASK_ID, type: STRING, example: \"abc123\" }"
+            ],
+            "source": "references/house-style-vs-user-style.md#whats-engine-mandatory-not-overridable"
+        },
+        {
+            "id": "credentials-string-password",
+            "title": "Credential inputs are always STRING_PASSWORD",
+            "class": "engine",
+            "scope": "input-type",
+            "statement": "Type every credential input (API key, bearer token, password, secret) as STRING_PASSWORD, with no exceptions.",
+            "rationale": "STRING_PASSWORD masks the value in the Stream Designer UI; STRING renders it in plaintext to anyone who can see the panel.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "{ name: Input.API_KEY, type: STRING, example: \"abc123def456\" }"
+            ],
+            "correct": [
+                "{ name: Input.API_KEY, type: STRING_PASSWORD, example: \"abc123def456\" }"
+            ],
+            "source": "references/secrets-and-auth.md#declaring-a-credential-input"
+        },
+        {
+            "id": "no-log-string-password",
+            "title": "Never log a STRING_PASSWORD value",
+            "class": "engine",
+            "scope": "security",
+            "statement": "Never pass a STRING_PASSWORD input's value to addNodeLog, console.log, or any output.",
+            "rationale": "The engine does not auto-redact STRING_PASSWORD from logs, so logging it surfaces the credential to anyone who can see node logs.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "this.wave.logger.addNodeLog(`token=${apiKey}`);"
+            ],
+            "correct": [
+                "this.wave.logger.addNodeLog(\"Authenticated request sent\");"
+            ],
+            "source": "references/errors.md#the-pattern-in-code"
+        },
+        {
+            "id": "no-secret-store-in-execute",
+            "title": "Never call the secret store from execute()",
+            "class": "engine",
+            "scope": "security",
+            "statement": "Read credentials only from a STRING_PASSWORD input; never call the helmut.cloud secret store API from inside execute().",
+            "rationale": "The user's supply mechanism (a literal, an upstream Get Secret node, a stream variable) is their choice, not the node's; calling the vault directly hard-codes the node to one org/space and breaks portability.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "const secret = await wave.general.getHcloudClient().High5.space.secret.getSecret(id);"
+            ],
+            "correct": [
+                "const secret = this.wave.inputs.getInputValueByInputName(Input.API_KEY) as string;"
+            ],
+            "source": "references/secrets-and-auth.md#the-node-authors-rule-accept-credentials-as-inputs"
+        },
+        {
+            "id": "throw-to-fail",
+            "title": "Throw to fail; never invent an error output",
+            "class": "engine",
+            "scope": "error-message",
+            "statement": "Signal failure by throwing an Error from execute(); never add a custom Output.ERROR_MESSAGE-style field.",
+            "rationale": "The engine catches any thrown error, takes the Fail edge, and surfaces the message verbatim; a resolved execute() always takes Success, so a parallel error-output field just splits the API the engine already provides.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "this.wave.outputs.setOutput(Output.ERROR_MESSAGE, \"failed\"); return;"
+            ],
+            "correct": [
+                "throw new Error(\"Could not retrieve resource — server returned 404 — verify the resource id\");"
+            ],
+            "source": "references/errors.md#how-the-engine-handles-errors"
+        },
+        {
+            "id": "no-shell-string-injection",
+            "title": "Never pass resolved input into a shell string",
+            "class": "engine",
+            "scope": "security",
+            "statement": "Never pass a wildcard-resolved value to exec/execSync, a template-string command, or spawn/execa with shell: true. The single exception is a node whose entire product is arbitrary command execution (a command-runner node, never one wrapping a specific CLI), and only after the human has explicitly accepted the risk as a stated decision in the contract review block — never as a no-reply-fallback assumption — with the full hardening checklist still applied.",
+            "rationale": "Resolved input is attacker-controlled network input by the time execute() runs; a shell string turns that into remote code execution on the customer's host.",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "exec(`kubectl get pod ${podName}`);"
+            ],
+            "correct": [
+                "execa(\"/usr/local/bin/kubectl\", [\"get\", \"pod\", podName, \"-o\", \"json\"]);"
+            ],
+            "source": "references/shell-injection-and-process-execution.md#the-nodejs-apis-ranked-by-safety"
+        },
+        {
+            "id": "additional-connectors-mid-execution-only",
+            "title": "Additional connectors fire only mid-execution",
+            "class": "engine",
+            "scope": "process",
+            "statement": "Use additional connectors only for events that fire while execute() is still running (loop items, progress, streaming chunks); route every terminal outcome through throw/Fail instead.",
+            "rationale": "A terminal outcome (404, rate-limited, validation failure) only happens once at the end; modeling it as a connector misleads users who correctly expect to check the Fail output for \"did this work?\".",
+            "enforcedBy": "agent",
+            "overridable": false,
+            "incorrect": [
+                "// additionalConnectors: [{ name: \"Not found\", ... }] fired instead of throwing"
+            ],
+            "correct": [
+                "await this.wave.outputs.executeAdditionalConnector(\"Item\"); // per loop iteration only"
+            ],
+            "source": "references/errors.md#terminal-outcomes--throw-to-fail-always"
+        },
+        {
+            "id": "no-class-self-reference",
+            "title": "Never reference a node class by its own name inside its body",
+            "class": "engine",
+            "scope": "process",
+            "statement": "Inside a node class's body, never reference the class by its own name (a static helper called as ClassName.helper(), ClassName.CONSTANT, instanceof ClassName, new ClassName(), typeof ClassName, or a bare value reference); use a module-level function, an instance method via this, or this.constructor instead.",
+            "rationale": "esbuild 0.25.1 rewrites a class that references its own name inside its body as a named class expression (class _ClassName), which changes the runtime constructor name; the blueprint's Catalog keys its registry by that name, so the node silently disappears from the bundle and 'npm run spec' fails with \"is not a constructor\" (verified esbuild 0.25.1, blueprint lib/Catalog.ts; step 4 eval runs, reproduced).",
+            "enforcedBy": "lint",
+            "lintRule": "no-class-self-reference",
+            "overridable": false,
+            "incorrect": [
+                "class CreateTicket extends Node { static parseId(raw: string) { return raw.trim(); } execute() { return CreateTicket.parseId(this.raw); } }"
+            ],
+            "correct": [
+                "function parseId(raw: string) { return raw.trim(); }",
+                "class CreateTicket extends Node { execute() { return parseId(this.raw); } }"
+            ],
+            "source": "references/testing-and-debugging.md#1-unit-tests-on-pure-helpers-jest"
+        },
+        {
+            "id": "wavedoc-sidecar-required",
+            "title": "Every node ships a wavedoc sidecar",
+            "class": "house-style",
+            "scope": "documentation",
+            "statement": "Ship a <NodeName>.md wavedoc sidecar next to every concrete <NodeName>.ts, opening with the ::wavedoc delimiter. Abstract base classes under lib/nodes (ActionNode, ConditionNode, CustomNode) are not nodes and need no sidecar.",
+            "rationale": "Workflow engineers read the sidecar in Stream Designer and agents read it as the node's contract; nothing in the engine or Agent parses it, so this is a prescribed convention that scripts/verify.mjs checks mechanically, not an engine requirement.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "lib/nodes/CreateTicket.ts   (no sibling .md)"
+            ],
+            "correct": [
+                "lib/nodes/CreateTicket.ts",
+                "lib/nodes/CreateTicket.md   (starts with ::wavedoc)"
+            ],
+            "source": "references/house-style-vs-user-style.md#whats-engine-mandatory-not-overridable"
+        },
+        {
+            "id": "sentence-case-names",
+            "title": "User-visible names use sentence case",
+            "class": "house-style",
+            "scope": "spec",
+            "statement": "Write every user-visible name (node name, category, input/output name, STRING_SELECT option key) in sentence case: first word capitalized, later words lowercase.",
+            "rationale": "Stream Designer renders these as compact labels in a dense panel; sentence case scans faster and removes the recurring is-this-an-acronym judgment call.",
+            "enforcedBy": "lint",
+            "lintRule": "sentence-case-names",
+            "overridable": true,
+            "options": {
+                "allow": []
+            },
+            "incorrect": [
+                "{ name: \"Task ID\" }"
+            ],
+            "correct": [
+                "{ name: \"Task id\" }"
+            ],
+            "source": "references/naming-and-style.md#casing--sentence-case-for-all-user-visible-strings-house-style-must"
+        },
+        {
+            "id": "no-trailing-period-description",
+            "title": "Descriptions never end with terminal punctuation",
+            "class": "house-style",
+            "scope": "description",
+            "statement": "Write every description as a label fragment with no trailing period, exclamation mark, or question mark.",
+            "rationale": "Descriptions render as inline UI labels in Stream Designer, not paragraphs.",
+            "enforcedBy": "lint",
+            "lintRule": "no-trailing-period-description",
+            "overridable": true,
+            "incorrect": [
+                "{ description: \"The display title for the task.\" }"
+            ],
+            "correct": [
+                "{ description: \"The display title for the task\" }"
+            ],
+            "source": "references/naming-and-style.md#no-trailing-period-for-descriptions-house-style-must"
+        },
+        {
+            "id": "curl-output-last",
+            "title": "A Curl output must be the last output",
+            "class": "house-style",
+            "scope": "output-order",
+            "statement": "If a node declares an output named Curl, make it the last element of the outputs array.",
+            "rationale": "Curl is diagnostic, not data; keeping data outputs together above it keeps the Stream Designer panel scannable.",
+            "enforcedBy": "lint",
+            "lintRule": "curl-output-last",
+            "overridable": true,
+            "incorrect": [
+                "enum Output { CURL = \"Curl\", TASK_ID = \"Task id\" }"
+            ],
+            "correct": [
+                "enum Output { TASK_ID = \"Task id\", CURL = \"Curl\" }"
+            ],
+            "source": "references/naming-and-style.md#output-ordering-for-api-calling-nodes-house-style-must"
+        },
+        {
+            "id": "total-count-output-name",
+            "title": "A List node's count output is named \"Total count\"",
+            "class": "house-style",
+            "scope": "output-name",
+            "statement": "Name a List node's count output exactly \"Total count\", never \"<Entity> count\".",
+            "rationale": "The List archetype fixes this output's name so every List node exposes the same wireable field regardless of entity; eval sweeps show models instead deriving the name from the entity being listed (Secret count, Project count, Workspace count), which reads plausible per-node but breaks the shared archetype across the catalog.",
+            "enforcedBy": "lint",
+            "lintRule": "total-count-output-name",
+            "overridable": true,
+            "options": {
+                "allow": []
+            },
+            "incorrect": [
+                "enum Output { SECRET_COUNT = \"Secret count\" }"
+            ],
+            "correct": [
+                "enum Output { TOTAL_COUNT = \"Total count\" }"
+            ],
+            "source": "references/naming-and-style.md#per-http-method-output-archetypes-house-style-must"
+        },
+        {
+            "id": "input-entity-prefix",
+            "title": "Entity-property input names lead with the entity",
+            "class": "house-style",
+            "scope": "input-name",
+            "statement": "Prefix an input name with the entity noun when the input describes a property of the node's entity (Task name, not Name); leave call-level inputs (Timeout, Api key) un-prefixed.",
+            "rationale": "Wildcards make field names appear next to other nodes' fields in the Stream Designer picker; a bare Name is unselectable when six upstream nodes each emit one.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ name: \"Name\" }   // on CreateClickUpTask"
+            ],
+            "correct": [
+                "{ name: \"Task name\" }   // on CreateClickUpTask"
+            ],
+            "source": "references/naming-and-style.md#input-entity-qualification-house-style-must-for-entity-property-inputs"
+        },
+        {
+            "id": "node-name-verb-noun",
+            "title": "Node names are <Verb> <Entity>",
+            "class": "house-style",
+            "scope": "node-name",
+            "statement": "Name nodes <Verb> <Entity> using the CRUD verb vocabulary (Get/List/Create/Replace/Update/Delete) or the non-CRUD verb list, preferring two words.",
+            "rationale": "One consistent verb per operation type keeps the catalog navigable and disambiguates singular vs. collection operations (Get ticket vs. List tickets).",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "\"Get Tickets\"   // plural with Get is ambiguous"
+            ],
+            "correct": [
+                "\"List tickets\""
+            ],
+            "source": "references/naming-and-style.md#node-names"
+        },
+        {
+            "id": "category-plural-entity",
+            "title": "Categories are a pluralized entity, not a product name",
+            "class": "house-style",
+            "scope": "category",
+            "statement": "Name each category as a pluralized entity noun, max two words, shared across every node in the cluster, except a non-entity transform node may use a singular domain noun instead (Cryptography, Text).",
+            "rationale": "One category per related cluster keeps CRUD siblings together; reusing a bare product/platform name as the category fragments related actions and produces hundreds of one-node categories.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "category: \"Jitbit\"",
+                "category: \"Kubernetes\"   // bare platform name, no entity"
+            ],
+            "correct": [
+                "category: \"Tickets\"",
+                "category: \"Kubernetes pods\"   // platform name paired with the pluralized entity"
+            ],
+            "source": "references/naming-and-style.md#categories"
+        },
+        {
+            "id": "node-description-template",
+            "title": "Node descriptions follow the per-verb template",
+            "class": "house-style",
+            "scope": "description",
+            "statement": "Write the node description from the per-operation template (e.g. \"Creates a new <entity> in <Product>\"), present tense, ending with the product name when relevant.",
+            "rationale": "The templates constrain language to plain action verbs and entity nouns, keeping the catalog free of marketing adjectives and infrastructure jargon.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "description: \"Seamlessly automates ticket workflows\""
+            ],
+            "correct": [
+                "description: \"Creates a new ticket in Jitbit\""
+            ],
+            "source": "references/naming-and-style.md#node-descriptions"
+        },
+        {
+            "id": "description-is-label",
+            "title": "Descriptions are label fragments in the right register",
+            "class": "house-style",
+            "scope": "description",
+            "statement": "Write every description as a short label fragment in the register its field calls for: imperative for inputs, declarative for outputs, with no first person and no marketing language.",
+            "rationale": "Mixing registers (imperative and declarative) inside one catalog reads as inconsistent, and marketing language drifts away from the plain operational tone the UI needs.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ description: \"We provide a powerful way to fetch the task\" }"
+            ],
+            "correct": [
+                "{ description: \"Enter the id of the task to get\" }"
+            ],
+            "source": "references/naming-and-style.md#tone"
+        },
+        {
+            "id": "input-description-conventions",
+            "title": "Input description opener and format hint follow the type",
+            "class": "house-style",
+            "scope": "input-type",
+            "statement": "Open the description with the verb the input type dictates (Enter/Choose/Displays/Verifies/...), and put any format hint in one trailing parenthetical, never woven into the sentence.",
+            "rationale": "The opener register is a UX signal for how the field behaves; a format hint appended in parentheses is scannable, while weaving it into prose or stacking two parentheticals adds friction across a dense panel.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ description: \"Enter the start date in YYYY-MM-DD format\" }   // STRING"
+            ],
+            "correct": [
+                "{ description: \"Enter the start date (YYYY-MM-DD)\" }"
+            ],
+            "source": "references/naming-and-style.md#descriptions-aim-for-6080-characters-hard-cap-120"
+        },
+        {
+            "id": "machine-value-translation",
+            "title": "Expose human-typeable input, translate at the boundary",
+            "class": "house-style",
+            "scope": "input-type",
+            "statement": "When the API expects a machine-only form (epoch ms, base64, packed bit-flags), expose the human-readable form in the spec and convert inside execute().",
+            "rationale": "Input types are for humans, not the API; the wire format is an implementation detail the node should hide, and the conversion is where the boundary validation belongs.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ description: \"Enter the due date as epoch ms\", type: NUMBER, example: 1735689600000 }"
+            ],
+            "correct": [
+                "{ description: \"Enter the due date (YYYY-MM-DDTHH:mm:ssZ)\", type: STRING, example: \"2025-01-01T00:00:00Z\" }"
+            ],
+            "source": "references/naming-and-style.md#machine-friendly-value-translation-house-style-must"
+        },
+        {
+            "id": "input-count-triage",
+            "title": "Triage with the user past ~10 inputs",
+            "class": "house-style",
+            "scope": "spec",
+            "statement": "Stop and triage the input list with the user once a node's total input count passes roughly ten.",
+            "rationale": "A node that exposes twenty inputs is a UX failure regardless of the mandatory/advanced split; the API surface is the upper bound on what the node can accept, not a target to transliterate.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "options": {
+                "maxInputs": 10
+            },
+            "incorrect": [
+                "// 18 inputs, 1:1 mapped from the OpenAPI schema, no triage conversation"
+            ],
+            "correct": [
+                "// 6 curated inputs; niche fields folded into one advanced JSON \"Extra options\" input"
+            ],
+            "source": "references/specification.md#curated-abstraction-not-transliteration"
+        },
+        {
+            "id": "mandatory-vs-advanced",
+            "title": "Mandatory is for strictly-required inputs only",
+            "class": "house-style",
+            "scope": "input-type",
+            "statement": "Reserve mandatory: true for inputs execute() literally cannot proceed without; set advanced: true for anything else with a sensible default.",
+            "rationale": "Stream Designer renders mandatory inputs front-and-center and tucks advanced ones under an accordion; twelve visible fields on a node that needs three is a UX failure even when each is technically optional.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ name: \"Timeout\", mandatory: true }   // has a sensible default"
+            ],
+            "correct": [
+                "{ name: \"Timeout\", advanced: true, defaultValue: 30000 }"
+            ],
+            "source": "references/naming-and-style.md#mandatory-vs-advanced--be-strict"
+        },
+        {
+            "id": "example-placeholder-values",
+            "title": "Examples use the standard realistic placeholder set",
+            "class": "house-style",
+            "scope": "spec",
+            "statement": "Fill example fields with realistic values from the standard placeholder set (helmut, cloud, hi@helmut.cloud, https://helmut.cloud/, ...), never a generic <placeholder>.",
+            "rationale": "Placeholder examples show up in Stream Designer's spec preview; a realistic value demonstrates the shape at a glance where \"<your-token>\" demonstrates nothing.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "example: \"<your-email>\""
+            ],
+            "correct": [
+                "example: \"hi@helmut.cloud\""
+            ],
+            "source": "references/naming-and-style.md#examples-are-mandatory"
+        },
+        {
+            "id": "credential-and-url-input-naming",
+            "title": "Credential and URL inputs follow the standard templates",
+            "class": "house-style",
+            "scope": "input-name",
+            "statement": "Name a SaaS endpoint input \"<Product> url\" with description \"Enter the base url of the <Product> instance\", and name a credential input after the auth type itself (Api key, Bearer token) with description \"Enter the <auth-name> for the <Product> API\".",
+            "rationale": "A consistent, literal template across the catalog means workflow engineers recognize the credential/URL pair on sight instead of parsing bespoke wording per vendor.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ name: \"URL\", description: \"The endpoint\" }, { name: \"Key\" }"
+            ],
+            "correct": [
+                "{ name: \"Jitbit url\", description: \"Enter the base url of the Jitbit instance\" }"
+            ],
+            "source": "references/naming-and-style.md#url-input-pattern-for-saas-endpoints"
+        },
+        {
+            "id": "search-and-pagination-inputs",
+            "title": "Search nodes need a filter; pagination isn't a default input",
+            "class": "house-style",
+            "scope": "input-type",
+            "statement": "Give every search/list node at least one visible search/filter input beyond credentials, and don't expose raw pagination fields (Page, Offset, Cursor) unless the one-shot runtime can actually use them.",
+            "rationale": "Credentials alone aren't a usable visible surface for a search node, and one-shot Stream Designer execution can't naturally advance API pages, so raw pagination fields are dead controls.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "inputs: [Input.API_KEY, Input.PAGE, Input.PER_PAGE]   // no query/filter input"
+            ],
+            "correct": [
+                "inputs: [Input.API_KEY, Input.SEARCH_QUERY, Input.MAX_RESULTS /* advanced */]"
+            ],
+            "source": "references/naming-and-style.md#search-and-list-visibility"
+        },
+        {
+            "id": "outputs-curated-raw-curl",
+            "title": "Outputs order: curated, then raw entity, then Curl",
+            "class": "house-style",
+            "scope": "output-order",
+            "statement": "Order every API-calling node's outputs as curated fields first, the raw response object (entity noun, JSON) next, then Curl last, matching the minimums for its CRUD archetype (List/Get/Create/Update/Delete).",
+            "rationale": "This tiering gives workflow engineers the common wire first, an escape hatch to any field via the raw object second, and keeps the diagnostic Curl output visually separated from data.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "enum Output { CURL, STATUS_CODE, TASK }"
+            ],
+            "correct": [
+                "enum Output { TASK_ID, TASK_URL, TASK, CURL }"
+            ],
+            "source": "references/naming-and-style.md#output-ordering-for-api-calling-nodes-house-style-must"
+        },
+        {
+            "id": "curated-output-wireability",
+            "title": "Curate outputs by wireability, not by mechanical translation",
+            "class": "house-style",
+            "scope": "output-name",
+            "statement": "Promote a response field to its own curated output only when it passes a wireability test (primary identifier, external link, branchable state, cardinality, stable primitive, or authoritative value).",
+            "rationale": "Picking outputs is editorial judgment about what's wireable downstream, not a 1:1 translation of the API response; nested objects, server-internal ids, and fields no workflow engineer would wire belong in the raw entity instead.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "// every top-level API response field promoted to its own output"
+            ],
+            "correct": [
+                "enum Output { TASK_ID, TASK_URL, TASK /* raw, escape hatch */, CURL }"
+            ],
+            "source": "references/naming-and-style.md#curated-output-reasoning-house-style-must"
+        },
+        {
+            "id": "raw-output-entity-noun",
+            "title": "Raw output is the entity noun; Status code isn't default",
+            "class": "house-style",
+            "scope": "output-name",
+            "statement": "Name a domain node's raw response output after its entity (Task, Tickets, Project), never Response/Response body/Result/Data/Body, and omit Status code unless the node intentionally doesn't fail on non-2xx.",
+            "rationale": "House convention is throw-to-fail on non-2xx, so status code adds nothing on the success path; a generic transport name on a domain node leaks the transport layer into wildcard paths downstream.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "enum Output { STATUS_CODE = \"Status code\", RESPONSE_BODY = \"Response body\" }"
+            ],
+            "correct": [
+                "enum Output { TASK = \"Task\" }"
+            ],
+            "source": "references/naming-and-style.md#the-anti-default-to-forbid-by-name-house-style-must-not"
+        },
+        {
+            "id": "no-shared-output-enum",
+            "title": "Never extract a shared Output enum across nodes",
+            "class": "house-style",
+            "scope": "output-name",
+            "statement": "Keep each node's enum Output declared locally to that node; never hoist a catalog-level OUTPUTS constant or SharedOutput enum reused across specs.",
+            "rationale": "Each node's outputs are a per-node user-facing contract — the wildcard lookup key, the lint-checked shape, and the versioning boundary all operate per node; sharing belongs in the helper layer, never the spec layer.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "export enum SharedOutput { STATUS_CODE, RESPONSE_BODY }   // imported by many nodes"
+            ],
+            "correct": [
+                "enum Output { TASK_ID, TASK, CURL }   // declared inside CreateTask.ts"
+            ],
+            "source": "references/naming-and-style.md#outputs-are-per-node--never-extracted-into-a-shared-catalog-level-constant-house-style-must-not"
+        },
+        {
+            "id": "curl-on-http-nodes",
+            "title": "Axios HTTP nodes always ship a Curl output",
+            "class": "house-style",
+            "scope": "output-type",
+            "statement": "Give every node that builds and sends its own HTTP request via wave.axiosHelper a STRING Curl output built via wave.axiosHelper.convertRequestToCurl, with credential headers redacted to a placeholder, except multipart/form-data requests (convertRequestToCurl does not support form data — omit Curl or build it by hand and note the limitation). Nodes that call through an SDK client (hcloud-sdk, an AWS SDK, or any other vendor SDK) never have an axios request config to convert, so they don't ship a Curl output at all — document what the node calls in the wavedoc instead.",
+            "rationale": "Workflow engineers use the Curl output to reproduce the exact call in Postman or a terminal when the node's behavior and the API's response disagree; convertRequestToCurl needs an AxiosRequestConfig, which only exists for nodes that own the request themselves — an SDK client builds and sends the request internally, so there is no config to convert and no way to build a truthful Curl string.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "// axios-based HTTP node with no Curl output — no way to reproduce the call"
+            ],
+            "correct": [
+                "this.wave.outputs.setOutput(Output.CURL, this.wave.axiosHelper.convertRequestToCurl(safeConfig));",
+                "// correct without Curl: hcloud-sdk node calling client.High5.space.event.searchEvents(...) — no axios config exists to convert, so no Curl output; the wavedoc states which sdk method the node calls"
+            ],
+            "source": "references/naming-and-style.md#always-include-a-curl-output-on-http-nodes"
+        },
+        {
+            "id": "no-run-time-output",
+            "title": "Never declare a Run time output",
+            "class": "house-style",
+            "scope": "output-name",
+            "statement": "Don't declare a Run time (or similar duration) output; rely on the engine's own node.<uuid>.info.runTime wildcard instead.",
+            "rationale": "The engine measures node duration automatically and exposes it as a wildcard, so a spec-level Run time output duplicates engine state and forces every node to time its own try/finally.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "enum Output { RUN_TIME = \"Run time\" }"
+            ],
+            "correct": [
+                "// duration read via {{node.<uuid>.info.runTime}} — no output declared"
+            ],
+            "source": "references/naming-and-style.md#outputs-are-per-node--never-extracted-into-a-shared-catalog-level-constant-house-style-must-not"
+        },
+        {
+            "id": "output-type-priority",
+            "title": "Pick the most specific output type before JSON",
+            "class": "house-style",
+            "scope": "output-type",
+            "statement": "Walk STRING/STRING_LONG/STRING_LIST/STRING_MAP/NUMBER/BOOLEAN/XML/HTML in priority order before reaching for JSON or ANY.",
+            "rationale": "Stream Designer renders STRING_LIST and STRING_MAP as typed editors and downstream nodes get a real string[]/Record without JSON.parse; declaring a typed shape as JSON works but produces a worse UI.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "{ type: JSON, example: [\"a\", \"b\", \"c\"] }"
+            ],
+            "correct": [
+                "{ type: STRING_LIST, example: [\"a\", \"b\", \"c\"] }"
+            ],
+            "source": "references/specification.md#picking-the-right-output-type--priority-rules"
+        },
+        {
+            "id": "three-part-error-message",
+            "title": "Error messages have three parts: what, why, what to check",
+            "class": "house-style",
+            "scope": "error-message",
+            "statement": "Write every thrown error message as [What failed] — [Why] — [What to check], each one short clause, separated by an em-dash.",
+            "rationale": "The user reads this string as the Fail-output failure message; a bare message or a stack trace tells them nothing actionable, while the three parts answer what broke, why, and what to do next in order.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "throw new Error(\"Failed\");"
+            ],
+            "correct": [
+                "throw new Error(\"Could not write file — disk full — free up space in %TEMP%\");"
+            ],
+            "source": "references/errors.md#the-three-part-error-message-pattern-house-style"
+        },
+        {
+            "id": "node-protocol-imports",
+            "title": "Import Node builtins via the node: protocol",
+            "class": "house-style",
+            "scope": "imports",
+            "statement": "Import every Node.js standard-library module through its node: specifier (node:crypto, node:fs/promises, node:path), never the bare name.",
+            "rationale": "The node: prefix is explicit-by-design, works on every Node version the engine targets, and avoids a future npm package shadowing the builtin name.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "import { createHash } from \"crypto\";"
+            ],
+            "correct": [
+                "import { createHash } from \"node:crypto\";"
+            ],
+            "source": "references/typescript-best-practices.md#nodejs-builtin-imports-use-the-node-prefix-house-style"
+        },
+        {
+            "id": "satisfies-over-as",
+            "title": "Prefer satisfies over as for spec literals",
+            "class": "house-style",
+            "scope": "process",
+            "statement": "Confirm a literal conforms to a type with satisfies instead of casting it with as, so the literal type isn't widened away.",
+            "rationale": "A cast loses the literal type entirely; satisfies keeps the narrower inferred type flowing through while still checking conformance.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "const spec = { inputs: [...] } as StreamNodeSpecificationV3;"
+            ],
+            "correct": [
+                "const spec = { inputs: [...] } satisfies StreamNodeSpecificationV3;"
+            ],
+            "source": "references/typescript-best-practices.md#satisfies-over-as-for-literals"
+        },
+        {
+            "id": "stdlib-over-dependency",
+            "title": "Reach for stdlib and the wave-engine before a new dependency",
+            "class": "house-style",
+            "scope": "dependencies",
+            "statement": "Before adding an npm package, check whether the wave-engine helper layer, the Node stdlib, or a 30-50 line reimplementation already covers the need.",
+            "rationale": "Most npm packages do more than needed and drag in a transitive tree; a short focused implementation has zero transitive dependencies and won't break when the package author rewrites its API.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "import { v4 as uuidv4 } from \"uuid\";"
+            ],
+            "correct": [
+                "import { randomUUID } from \"node:crypto\";"
+            ],
+            "source": "references/dependencies.md#the-four-question-test"
+        },
+        {
+            "id": "action-not-endpoint",
+            "title": "Design the action, not the endpoint",
+            "class": "house-style",
+            "scope": "spec",
+            "statement": "Reason from the user-meaningful action first and compose the underlying API/CLI calls inside one execute(), instead of fanning out into a chain of mechanical one-call-per-endpoint wrappers.",
+            "rationale": "Opinionated catalogs feel coherent because every tile is an action the user wants to take, not a transport detail; this is the single most consequential house-style choice.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "// three separate nodes: CreateUploadUrl, PutFile, FinalizeUpload"
+            ],
+            "correct": [
+                "// one UploadVideo node composing the three calls inside execute()"
+            ],
+            "source": "references/house-style-vs-user-style.md#whats-opinionated-house-style--overridable"
+        },
+        {
+            "id": "helper-class-extraction",
+            "title": "Extract a domain helper class per wrapped external system",
+            "class": "house-style",
+            "scope": "process",
+            "statement": "Extract one lib/helpers/<product>-client.ts (or similar) per external system a catalog wraps, and have nodes delegate to it instead of inlining API calls.",
+            "rationale": "Sharing belongs in the helper layer, not the spec layer; a shared helper class keeps HTTP setup, response normalization, and error translation in one place across sibling nodes.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "// five nodes, each with its own inline axios setup for the same API"
+            ],
+            "correct": [
+                "// lib/helpers/jitbit-client.ts used by all five Jitbit nodes"
+            ],
+            "source": "references/house-style-vs-user-style.md#whats-opinionated-house-style--overridable"
+        },
+        {
+            "id": "file-conflict-handling",
+            "title": "OS-mutating nodes offer a conflict-rule input",
+            "class": "house-style",
+            "scope": "input-type",
+            "statement": "Give any node whose action can collide at the OS level (create/copy/move/rename/download) a STRING_SELECT input backed by DuplicateFileOption (Overwrite/Rename/Increment/Skip/Fail).",
+            "rationale": "Without an explicit conflict rule, the node's behavior on a naming collision is undefined from the workflow engineer's point of view.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "// FileCopyAction with no conflict-handling input — silently overwrites or throws"
+            ],
+            "correct": [
+                "{ name: \"On duplicate\", type: STRING_SELECT, options: DuplicateFileOption }"
+            ],
+            "source": "references/house-style-vs-user-style.md#whats-opinionated-house-style--overridable"
+        },
+        {
+            "id": "wavedoc-format-and-causes",
+            "title": "Wavedoc opens with \"The <Title> node\", lists Fail causes",
+            "class": "house-style",
+            "scope": "documentation",
+            "statement": "Open the wavedoc description with the literal phrase \"The <Node title> node ...\" and list one Fail-connector cause per distinct error class the node can throw.",
+            "rationale": "The consistent opening phrase lets users scan a catalog quickly, and causes give workflow engineers a deterministic, reusable failure taxonomy instead of one opaque Fail connector.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "description: \"This node makes a request.\"   // no causes listed on Fail"
+            ],
+            "correct": [
+                "description: \"The HTTP Client node makes HTTP requests...\"   // Fail has 3 causes"
+            ],
+            "source": "references/node-documentation.md#tone-house-style"
+        },
+        {
+            "id": "shell-command-hardening",
+            "title": "Harden every process-spawning node beyond \"no shell strings\"",
+            "class": "house-style",
+            "scope": "security",
+            "statement": "For any node that spawns a process with resolved input, allow-list each argument with a positive regex, reject a leading '-', use an absolute binary path, and register onCleanup to kill the child on cancel.",
+            "rationale": "Array argv alone blocks shell metacharacter injection but not flag injection, PATH poisoning, or an orphaned child after the stream is cancelled — each additional layer closes one of those gaps.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "incorrect": [
+                "execa(\"kubectl\", [podName]);   // no allow-list, relative binary, no cleanup"
+            ],
+            "correct": [
+                "execa(\"/usr/local/bin/kubectl\", [\"get\", \"pod\", \"--\", podName]); // + allow-list + onCleanup"
+            ],
+            "source": "references/shell-injection-and-process-execution.md#the-dont-block-protect-patterns"
+        },
+        {
+            "id": "character-limits",
+            "title": "Respect the soft character-limit table",
+            "class": "house-style",
+            "scope": "spec",
+            "statement": "Keep every user-visible string within its soft character limit (node name 30, node description 85, category 30, input/output name 30, input/output description 120).",
+            "rationale": "Stream Designer does not enforce these limits itself and will truncate or wrap long strings; the agent enforces them as a UX courtesy on the platform's behalf.",
+            "enforcedBy": "agent",
+            "overridable": true,
+            "options": {
+                "maxNodeName": 30,
+                "maxDescription": 85,
+                "maxCategory": 30,
+                "maxInputName": 30,
+                "maxInputDescription": 120,
+                "maxOutputName": 30,
+                "maxOutputDescription": 120,
+                "maxConnectorName": 30,
+                "maxConnectorDescription": 120,
+                "maxAuthorField": 60,
+                "maxChangelogEntry": 120
+            },
+            "incorrect": [
+                "description: \"Fetches the complete set of ticket details from the remote Jitbit instance for a given ticket identifier\""
+            ],
+            "correct": [
+                "description: \"Gets details of a specific ticket from Jitbit\""
+            ],
+            "source": "references/naming-and-style.md#character-limits-soft-warnings"
+        }
+    ]
+}
